@@ -5,16 +5,26 @@
     We listen to:
       - typeWindowStateChanged  — foreground app changes (Instagram open/close)
       - typeWindowContentChanged — UI tree updates (scrolling to new Reel)
+      - typeWindowsChanged       — window list changes (Instagram swiped away /
+                                   dismissed from recents / Home button pressed)
+                                   This is the key signal for closing overlays
+                                   the moment Instagram leaves the screen.
+      - typeViewScrolled         — additional scroll signal for Reel detection
 
-    We scope to Instagram's package to minimise battery impact.
-    canRetrieveWindowContent is required so we can inspect the node tree.
+    canRetrieveWindowContent is required to inspect the node tree.
+    canRetrieveWindowContent + typeWindowsChanged lets us read window.root
+    to verify which window belongs to Instagram when it disappears.
+
+    NOTE: packageNames is intentionally left empty (removed) so that
+    typeWindowsChanged fires for ALL packages — it must see non-Instagram
+    windows to know Instagram is gone. Reel detection still guards on
+    instagramPackage in code, so there is no privacy regression.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds"
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="100"
-    android:packageNames="com.instagram.android"
     android:summary="@string/accessibility_service_label" />
