@@ -10,6 +10,7 @@ import com.itsdonebro.R
 import com.itsdonebro.data.preferences.SettingsDataStore
 import com.itsdonebro.domain.LimitEvent
 import com.itsdonebro.domain.TrackingEngine
+import com.itsdonebro.domain.TrackingState
 import com.itsdonebro.overlay.OverlayManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
@@ -20,9 +21,14 @@ import javax.inject.Inject
 /**
  * Long-running foreground service that:
  *  1. Keeps [TrackingEngine] and [OverlayManager] alive even when the app is backgrounded.
- *  2. Shows / hides overlays based on TrackingState.
+ *  2. Shows / hides overlays based on TrackingState changes.
  *  3. Resets daily counters at midnight.
  *  4. Handles limit events (warnings, blocks).
+ *
+ * Overlay lifecycle:
+ *  - Instagram opens  → show floating counter immediately
+ *  - Limit reached    → replace counter with full-screen blocking overlay
+ *  - Instagram closes → hide ALL overlays immediately (hideAll)
  */
 @AndroidEntryPoint
 class TrackingForegroundService : Service() {
@@ -34,8 +40,8 @@ class TrackingForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     companion object {
-        private const val CHANNEL_ID   = "itsdonebro_tracking"
-        private const val NOTIF_ID     = 1001
+        private const val CHANNEL_ID = "itsdonebro_tracking"
+        private const val NOTIF_ID   = 1001
     }
 
     // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -63,27 +69,54 @@ class TrackingForegroundService : Service() {
 
     // ─── State observation ─────────────────────────────────────────────────────
 
+    /**
+     * Observe [TrackingState] and drive overlay visibility.
+     *
+     * Rules (evaluated on every state emission):
+     *  1. Instagram NOT foreground  → hide everything, immediately.
+     *  2. Limit reached + Instagram → show blocking overlay (hides counter automatically).
+     *  3. Instagram foreground, no limit → show floating counter.
+     *
+     * We combine overlayEnabled as a separate flow so the overlay reacts to
+     * the setting changing at runtime without needing a suspend call inside collect.
+     */
     private fun observeTrackingState() {
         serviceScope.launch {
-            trackingEngine.state.collect { state ->
-                val overlayEnabled = settings.overlayEnabled.first()
-
-                when {
-                    // Limit reached → show full-screen blocker
-                    state.isLimitReached && state.isInstagramForeground -> {
-                        overlayManager.showBlockingOverlay(trackingEngine.state)
-                    }
-                    // Instagram active, tracking → show floating counter
-                    state.isInstagramForeground && overlayEnabled -> {
-                        overlayManager.hideBlockingOverlay()
-                        overlayManager.showFloatingCounter(trackingEngine.state)
-                    }
-                    // Instagram closed → hide everything
-                    !state.isInstagramForeground -> {
-                        overlayManager.hideFloatingCounter()
-                        overlayManager.hideBlockingOverlay()
-                    }
+            // Combine tracking state + overlay toggle into a single stream
+            trackingEngine.state
+                .combine(settings.overlayEnabled) { state, overlayEnabled ->
+                    Pair(state, overlayEnabled)
                 }
+                .collect { (state, overlayEnabled) ->
+                    applyOverlayState(state, overlayEnabled)
+                }
+        }
+    }
+
+    private fun applyOverlayState(state: TrackingState, overlayEnabled: Boolean) {
+        when {
+            // ── Instagram is NOT in foreground → hide everything right now ──────
+            !state.isInstagramForeground -> {
+                overlayManager.hideAll()
+            }
+
+            // ── Limit reached while Instagram is open → full-screen block ────────
+            state.isLimitReached && state.isInstagramForeground -> {
+                // showBlockingOverlay is idempotent (guarded by blockingView != null)
+                overlayManager.showBlockingOverlay(trackingEngine.state)
+            }
+
+            // ── Instagram is open, no limit, overlay enabled → floating counter ──
+            state.isInstagramForeground && overlayEnabled -> {
+                // Ensure blocking overlay is gone (e.g. after daily reset)
+                overlayManager.hideBlockingOverlay()
+                // showFloatingCounter is idempotent (guarded by counterView != null)
+                overlayManager.showFloatingCounter(trackingEngine.state)
+            }
+
+            // ── Instagram is open but overlay setting is off → hide counter ──────
+            state.isInstagramForeground && !overlayEnabled -> {
+                overlayManager.hideFloatingCounter()
             }
         }
     }
@@ -93,17 +126,17 @@ class TrackingForegroundService : Service() {
             trackingEngine.limitEvents.collect { event ->
                 when (event) {
                     is LimitEvent.Warning80 -> {
-                        // Subtle notification — could vibrate lightly here
+                        // Subtle nudge — could vibrate lightly
                     }
                     is LimitEvent.Warning90 -> {
                         // More urgent nudge
                     }
                     is LimitEvent.LimitReached -> {
-                        // Overlay already handled via state; could vibrate
+                        // Blocking overlay handled via state in applyOverlayState
                         vibrate()
                     }
                     is LimitEvent.RepeatedAttempt -> {
-                        // Each attempt escalates the blocking message (handled by overlay)
+                        // Escalating message handled in BlockingOverlayContent
                     }
                 }
             }
@@ -115,8 +148,7 @@ class TrackingForegroundService : Service() {
     private fun scheduleMidnightReset() {
         serviceScope.launch {
             while (true) {
-                val msUntilMidnight = millisUntilMidnight()
-                delay(msUntilMidnight)
+                delay(millisUntilMidnight())
                 trackingEngine.resetDailyCounters()
             }
         }
@@ -164,7 +196,7 @@ class TrackingForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play) // replace with proper icon
+            .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("ItsDoneBro is watching 👀")
             .setContentText("Counting your Reels so you don't have to.")
             .setContentIntent(tapIntent)

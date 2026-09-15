@@ -40,9 +40,11 @@ class OverlayManager @Inject constructor(
     private var blockingView: View? = null
     private var blockingLifecycle: OverlayLifecycleOwner? = null
 
-    // ─── Public control ────────────────────────────────────────────────────────
+    // ─── Permission check ──────────────────────────────────────────────────────
 
     fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(context)
+
+    // ─── Floating counter ──────────────────────────────────────────────────────
 
     /** Show the floating counter above Instagram (if permission granted). */
     fun showFloatingCounter(stateFlow: StateFlow<TrackingState>) {
@@ -60,19 +62,22 @@ class OverlayManager @Inject constructor(
         }
     }
 
+    /** Hide and destroy the floating counter. */
     fun hideFloatingCounter() {
-        blockingView?.let { safeRemoveView(it) }
+        // FIX: was incorrectly removing blockingView here — now removes counterView only
         counterView?.let { safeRemoveView(it) }
         counterView = null
         counterLifecycle?.onDestroy()
         counterLifecycle = null
     }
 
+    // ─── Blocking overlay ──────────────────────────────────────────────────────
+
     /** Show the full-screen blocking overlay when the limit is reached. */
     fun showBlockingOverlay(stateFlow: StateFlow<TrackingState>) {
         if (!canDrawOverlays() || blockingView != null) return
-        // Hide the small counter while blocking
-        counterView?.let { safeRemoveView(it) }
+        // Hide the small counter while blocking overlay is shown
+        hideFloatingCounter()
 
         blockingView = createComposeOverlay(
             gravity = Gravity.CENTER,
@@ -93,11 +98,18 @@ class OverlayManager @Inject constructor(
         }
     }
 
+    /** Hide and destroy the blocking overlay. */
     fun hideBlockingOverlay() {
         blockingView?.let { safeRemoveView(it) }
         blockingView = null
         blockingLifecycle?.onDestroy()
         blockingLifecycle = null
+    }
+
+    /** Hide ALL overlays immediately — called when Instagram closes. */
+    fun hideAll() {
+        hideFloatingCounter()
+        hideBlockingOverlay()
     }
 
     // ─── Internal helpers ──────────────────────────────────────────────────────
@@ -121,7 +133,6 @@ class OverlayManager @Inject constructor(
 
         val view = ComposeView(context).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            // Use extension functions (lifecycle 2.7+) instead of deprecated static .set() calls
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeViewModelStoreOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
@@ -157,7 +168,7 @@ class OverlayManager @Inject constructor(
     }
 
     private fun dismissAndGoHome() {
-        hideBlockingOverlay()
+        hideAll()
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -166,11 +177,10 @@ class OverlayManager @Inject constructor(
     }
 
     private fun closeInstagram() {
-        dismissAndGoHome()   // navigating home is the cleanest user-visible way to "close" an app
+        dismissAndGoHome()
     }
 
     fun destroy() {
-        hideFloatingCounter()
-        hideBlockingOverlay()
+        hideAll()
     }
 }
