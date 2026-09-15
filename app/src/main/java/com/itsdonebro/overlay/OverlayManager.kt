@@ -12,9 +12,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.lifecycle.ViewTreeLifecycleOwner
-import androidx.lifecycle.ViewTreeViewModelStoreOwner
-import androidx.savedstate.findViewTreeSavedStateRegistryOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.itsdonebro.domain.MessageEngine
 import com.itsdonebro.domain.TrackingEngine
@@ -27,7 +26,7 @@ import javax.inject.Singleton
 
 @Singleton
 class OverlayManager @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val trackingEngine: TrackingEngine,
     private val messageEngine: MessageEngine
 ) {
@@ -122,8 +121,9 @@ class OverlayManager @Inject constructor(
 
         val view = ComposeView(context).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            ViewTreeLifecycleOwner.set(this, lifecycleOwner)
-            ViewTreeViewModelStoreOwner.set(this, lifecycleOwner)
+            // Use extension functions (lifecycle 2.7+) instead of deprecated static .set() calls
+            setViewTreeLifecycleOwner(lifecycleOwner)
+            setViewTreeViewModelStoreOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(lifecycleOwner)
             setContent {
                 ItsDoneBroTheme { content() }
