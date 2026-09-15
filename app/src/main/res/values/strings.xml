@@ -1,0 +1,81 @@
+<resources>
+    <string name="app_name">ItsDoneBro</string>
+    <string name="app_tagline">Because \"one more Reel\" is a lie.</string>
+
+    <!-- Accessibility Service -->
+    <string name="accessibility_service_label">ItsDoneBro Reel Tracker</string>
+    <string name="accessibility_service_description">
+        ItsDoneBro uses Accessibility access to detect when you\'re watching Instagram Reels.
+        It does NOT read your messages, photos, or private content.
+        It only counts Reels and measures time so it can enforce your daily limit.
+    </string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">Hey 👋</string>
+    <string name="onboarding_welcome_subtitle">I\'m ItsDoneBro.\n\nI don\'t hate Reels.\n\nI just think you and your thumb\nneed a little supervision.</string>
+    <string name="onboarding_track_title">I\'ll count everything.</string>
+    <string name="onboarding_track_subtitle">Reels watched. Time spent. Daily limits.\nAll of it.</string>
+    <string name="onboarding_limit_title">Set a limit.</string>
+    <string name="onboarding_limit_subtitle">How much Reel time do you want per day?\nBe honest. Be brave.</string>
+    <string name="onboarding_block_title">Then I block them.</string>
+    <string name="onboarding_block_subtitle">When you hit your limit, I cover the Reel\nwith a blocking screen.\n\nYou\'re welcome.</string>
+    <string name="onboarding_accessibility_title">One permission needed.</string>
+    <string name="onboarding_accessibility_subtitle">I need Accessibility access to detect\nwhen you\'re in the Reel dimension.\n\nDon\'t worry. I\'m not here to read your DMs.</string>
+    <string name="onboarding_overlay_title">And one more.</string>
+    <string name="onboarding_overlay_subtitle">Overlay permission lets me show the\nfloating counter and blocking screen\nabove Instagram.</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_todays_damage">Today\'s Damage 😭</string>
+    <string name="dashboard_reels_watched">Reels Watched</string>
+    <string name="dashboard_time_donated">Time Donated</string>
+    <string name="dashboard_daily_limit">Daily Limit</string>
+    <string name="dashboard_this_week">This Week</string>
+    <string name="dashboard_limit_reached">Limit Reached 🚫</string>
+    <string name="dashboard_no_reels">No Reels Today 🎉\nYour thumb is unemployed.\nGood for it.</string>
+    <string name="dashboard_tracking_active">Tracking Active ✓</string>
+    <string name="dashboard_tracking_paused">Tracking Paused ⚠️</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_tracking">Tracking</string>
+    <string name="settings_track_reels">Track Instagram Reels</string>
+    <string name="settings_overlay">Floating Counter</string>
+    <string name="settings_show_overlay">Show overlay</string>
+    <string name="settings_show_count">Show Reel count</string>
+    <string name="settings_show_timer">Show timer</string>
+    <string name="settings_daily_limit">Daily Limit</string>
+    <string name="settings_blocking">Blocking</string>
+    <string name="settings_blocking_mode">Blocking mode</string>
+    <string name="settings_cooldown">Cooldown duration</string>
+    <string name="settings_personality">Personality</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notif_summary">Daily summary</string>
+    <string name="settings_notif_warning">Limit warning</string>
+
+    <!-- Permissions -->
+    <string name="permission_accessibility_title">Enable Accessibility</string>
+    <string name="permission_accessibility_body">My Reel radar is offline.\n\nEnable accessibility access\nto turn the radar back on.</string>
+    <string name="permission_overlay_title">Enable Overlay</string>
+    <string name="permission_overlay_body">I know you can\'t see me.\nThat\'s the problem.\n\nPlease enable overlay permission\nso I can do my job.</string>
+    <string name="permission_fix_it">FIX IT</string>
+    <string name="permission_enable">Enable</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_tracking">Tracking</string>
+    <string name="notification_tracking_title">ItsDoneBro is watching 👀</string>
+    <string name="notification_tracking_text">Counting your Reels so you don\'t have to.</string>
+
+    <!-- Blocking Overlay Buttons -->
+    <string name="block_btn_done">I\'M DONE BRO</string>
+    <string name="block_btn_close_instagram">CLOSE INSTAGRAM</string>
+    <string name="block_btn_accept">ACCEPT MY FATE</string>
+    <string name="block_btn_fair_enough">FAIR ENOUGH</string>
+
+    <!-- General -->
+    <string name="btn_next">Next</string>
+    <string name="btn_get_started">Let\'s Go</string>
+    <string name="btn_continue">Continue</string>
+    <string name="btn_done">Done</string>
+    <string name="minutes_format">%d min</string>
+    <string name="hours_minutes_format">%dh %dm</string>
+</resources>

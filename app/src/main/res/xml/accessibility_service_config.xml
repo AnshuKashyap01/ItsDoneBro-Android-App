@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Accessibility Service Configuration for ItsDoneBro.
+
+    We listen to:
+      - typeWindowStateChanged  — foreground app changes (Instagram open/close)
+      - typeWindowContentChanged — UI tree updates (scrolling to new Reel)
+
+    We scope to Instagram's package to minimise battery impact.
+    canRetrieveWindowContent is required so we can inspect the node tree.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:packageNames="com.instagram.android"
+    android:summary="@string/accessibility_service_label" />
