@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ItsDoneBro launcher foreground icon.
+    Checkmark inside a gradient ring — "It's Done Bro."
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer ring (purple-to-blue gradient approximated as solid purple) -->
+    <path
+        android:fillColor="#7C4DFF"
+        android:pathData="M54,10
+            A44,44 0 1 1 53.9,10
+            Z
+            M54,18
+            A36,36 0 1 0 54.1,18
+            Z" />
+
+    <!-- Checkmark -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M34,52 L46,66 L74,38"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+</vector>
