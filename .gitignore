@@ -10,3 +10,5 @@
 local.properties
 *.md
 !README.md
+# Design reference files (already implemented — do not commit to repo root)
+ReelDetectionEngine.kt
