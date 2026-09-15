@@ -5,7 +5,6 @@ import com.itsdonebro.data.db.DailyStatsDao
 import com.itsdonebro.data.db.ReelSession
 import com.itsdonebro.data.db.ReelSessionDao
 import com.itsdonebro.data.preferences.SettingsDataStore
-import dagger.hilt.android.scopes.ServiceScoped
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.text.SimpleDateFormat
@@ -31,8 +30,8 @@ data class TrackingState(
 // ─── Limit events emitted to OverlayManager / ForegroundService ──────────────
 
 sealed class LimitEvent {
-    object Warning80  : LimitEvent()           // 80% of limit used
-    object Warning90  : LimitEvent()           // 90%
+    object Warning80    : LimitEvent()          // 80% of limit used
+    object Warning90    : LimitEvent()          // 90%
     object LimitReached : LimitEvent()
     data class RepeatedAttempt(val attempt: Int) : LimitEvent()
 }
@@ -40,9 +39,15 @@ sealed class LimitEvent {
 /**
  * Central tracking engine.
  *
- * Receives [ReelState] events from the AccessibilityService,
- * maintains live [TrackingState], persists sessions to Room,
- * and emits [LimitEvent]s when thresholds are crossed.
+ * Receives [ReelDetectionEvent]s from [ReelDetector] (via the AccessibilityService),
+ * maintains live [TrackingState], persists sessions to Room, and emits [LimitEvent]s
+ * when thresholds are crossed.
+ *
+ * Counting rule (from design doc):
+ *   - Increment reel COUNT on ReelStarted — so a reel the user is mid-watching
+ *     when the limit fires still appears in today's count.
+ *   - Add watch TIME on ReelEnded — once the real duration is known.
+ *   - Minimum duration gate: sessions < 100 ms are noise and not counted.
  *
  * Thread-safety: all mutations happen on [engineScope] (single-threaded dispatcher).
  */
@@ -65,12 +70,13 @@ class TrackingEngine @Inject constructor(
     private val _limitEvents = MutableSharedFlow<LimitEvent>(extraBufferCapacity = 8)
     val limitEvents: SharedFlow<LimitEvent> = _limitEvents.asSharedFlow()
 
-    // Session tracking
-    private var sessionStart: Long? = null
-    private var lastConfirmedReelState: ReelState = ReelState.UNKNOWN
-    private var debounceJob: Job? = null
+    /** The 3-layer detector — one instance for the lifetime of the engine. */
+    val reelDetector = ReelDetector(
+        scope = engineScope,
+        onEvent = { event -> engineScope.launch { handleDetectionEvent(event) } }
+    )
 
-    // Warn-threshold tracking (so we only emit once per threshold)
+    // Warn-threshold tracking (so we only emit once per threshold crossing)
     private var warned80 = false
     private var warned90 = false
 
@@ -89,92 +95,82 @@ class TrackingEngine @Inject constructor(
 
     // ─── Called from AccessibilityService ────────────────────────────────────
 
+    /** Called when Instagram enters or leaves the foreground. */
     fun onInstagramForeground(isForeground: Boolean) {
         engineScope.launch {
             _state.update { it.copy(isInstagramForeground = isForeground) }
             if (!isForeground) {
-                // Instagram backgrounded — close any open session
-                closeCurrentSession()
-                _state.update { it.copy(reelState = ReelState.UNKNOWN, isTracking = false) }
+                // Tell ReelDetector so it cleanly closes any open session
+                reelDetector.onInstagramBackgrounded()
+                _state.update {
+                    it.copy(reelState = ReelState.UNKNOWN, isTracking = false)
+                }
             }
         }
     }
 
     /**
      * Called on every accessibility event from Instagram.
-     * Uses a 500 ms debounce to avoid counting intermediate scroll states.
+     * Delegates directly to [ReelDetector.onTick] — the detector handles
+     * debouncing, fingerprinting, and state transitions internally.
      */
-    fun onReelStateDetected(detected: ReelState) {
-        debounceJob?.cancel()
-        debounceJob = engineScope.launch {
-            delay(500L)
-            processReelState(detected)
-        }
+    fun onAccessibilityTick(root: android.view.accessibility.AccessibilityNodeInfo) {
+        // ReelDetector is coroutine-safe; it manages its own debounce job internally.
+        reelDetector.onTick(root)
     }
 
-    // ─── State machine ────────────────────────────────────────────────────────
+    // ─── Detection event handler ──────────────────────────────────────────────
 
-    private suspend fun processReelState(newState: ReelState) {
-        val current = _state.value
-        if (!current.isInstagramForeground) return
+    private suspend fun handleDetectionEvent(event: ReelDetectionEvent) {
+        when (event) {
+            is ReelDetectionEvent.ReelStarted -> {
+                // Count the reel NOW (even if the user is still watching)
+                _state.update {
+                    it.copy(
+                        reelsToday = it.reelsToday + 1,
+                        reelState = ReelState.REEL,
+                        isTracking = true
+                    )
+                }
+                updateMessage()
+                persistDailyStats()
+                checkThresholds()
+            }
 
-        // Ignore UNKNOWN — wait for a confident signal
-        if (newState == ReelState.UNKNOWN) return
+            is ReelDetectionEvent.ReelEnded -> {
+                val durationSec = event.durationMs / 1000L
+                if (event.durationMs >= MIN_COUNTABLE_DURATION_MS && durationSec >= 1L) {
+                    // Persist the session record
+                    val now = System.currentTimeMillis()
+                    val start = now - event.durationMs
+                    reelSessionDao.insert(
+                        ReelSession(
+                            date = todayString(),
+                            startTime = start,
+                            endTime = now,
+                            durationSeconds = durationSec
+                        )
+                    )
+                    // Accumulate watch time
+                    _state.update {
+                        it.copy(watchTimeTodaySeconds = it.watchTimeTodaySeconds + durationSec)
+                    }
+                    recomputeProgress()
+                    persistDailyStats()
+                    checkThresholds()
+                }
+            }
 
-        // Transition: was NOT tracking, now detecting a Reel → start session
-        if (newState == ReelState.REEL && lastConfirmedReelState != ReelState.REEL) {
-            startNewReelSession()
-        }
+            is ReelDetectionEvent.TrackingPaused -> {
+                // User navigated away from Reels within Instagram (e.g. opened DMs)
+                _state.update { it.copy(reelState = ReelState.NOT_REEL, isTracking = false) }
+            }
 
-        // Transition: was tracking a Reel, moved to non-Reel → close session + count
-        if (newState != ReelState.REEL && lastConfirmedReelState == ReelState.REEL) {
-            closeCurrentSession()
-            incrementReelCount()
-        }
-
-        // Reel→Reel (new Reel scrolled into view while already tracking) — count and restart
-        if (newState == ReelState.REEL && lastConfirmedReelState == ReelState.REEL) {
-            val elapsed = sessionStart?.let { (System.currentTimeMillis() - it) / 1000L } ?: 0L
-            if (elapsed > 2L) {          // at least 2 sec on previous reel before counting
-                closeCurrentSession()
-                incrementReelCount()
-                startNewReelSession()
+            is ReelDetectionEvent.TrackingStopped -> {
+                // Instagram left the foreground — already handled in onInstagramForeground
+                _state.update { it.copy(reelState = ReelState.UNKNOWN, isTracking = false) }
             }
         }
-
-        lastConfirmedReelState = newState
-        _state.update { it.copy(reelState = newState, isTracking = newState == ReelState.REEL) }
-    }
-
-    // ─── Session management ───────────────────────────────────────────────────
-
-    private fun startNewReelSession() {
-        sessionStart = System.currentTimeMillis()
-    }
-
-    private suspend fun closeCurrentSession() {
-        val start = sessionStart ?: return
-        sessionStart = null
-        val end = System.currentTimeMillis()
-        val duration = (end - start) / 1000L
-        if (duration < 1L) return          // ignore sub-second blips
-
-        val today = todayString()
-        reelSessionDao.insert(
-            ReelSession(date = today, startTime = start, endTime = end, durationSeconds = duration)
-        )
-
-        // Accumulate watch time
-        _state.update { it.copy(watchTimeTodaySeconds = it.watchTimeTodaySeconds + duration) }
-        recomputeProgress()
-        persistDailyStats()
-        checkThresholds()
-    }
-
-    private suspend fun incrementReelCount() {
-        _state.update { it.copy(reelsToday = it.reelsToday + 1) }
-        updateMessage()
-        persistDailyStats()
     }
 
     // ─── Limit / threshold logic ──────────────────────────────────────────────
@@ -225,32 +221,29 @@ class TrackingEngine @Inject constructor(
 
     private suspend fun loadTodayStats() {
         val today = todayString()
-        val stats = dailyStatsDao.getByDate(today)
-        if (stats != null) {
-            val limitSec = settings.dailyLimitMinutes.first() * 60L
-            _state.update {
-                it.copy(
-                    reelsToday = stats.reelsWatched,
-                    watchTimeTodaySeconds = stats.totalWatchTimeSeconds,
-                    dailyLimitSeconds = limitSec,
-                    isLimitReached = stats.limitReached,
-                    limitProgress = if (limitSec > 0)
-                        stats.totalWatchTimeSeconds.toFloat() / limitSec else 0f
-                )
-            }
-            // Restore warning flags
-            val prog = _state.value.limitProgress
-            if (prog >= 0.8f) warned80 = true
-            if (prog >= 0.9f) warned90 = true
+        val stats = dailyStatsDao.getByDate(today) ?: return
+        val limitSec = settings.dailyLimitMinutes.first() * 60L
+        _state.update {
+            it.copy(
+                reelsToday = stats.reelsWatched,
+                watchTimeTodaySeconds = stats.totalWatchTimeSeconds,
+                dailyLimitSeconds = limitSec,
+                isLimitReached = stats.limitReached,
+                limitProgress = if (limitSec > 0)
+                    stats.totalWatchTimeSeconds.toFloat() / limitSec else 0f
+            )
         }
+        // Restore warning flags so we don't re-trigger them on the same day
+        val prog = _state.value.limitProgress
+        if (prog >= 0.8f) warned80 = true
+        if (prog >= 0.9f) warned90 = true
     }
 
     private suspend fun persistDailyStats() {
         val s = _state.value
-        val today = todayString()
         dailyStatsDao.upsert(
             DailyStats(
-                date = today,
+                date = todayString(),
                 reelsWatched = s.reelsToday,
                 totalWatchTimeSeconds = s.watchTimeTodaySeconds,
                 limitSeconds = s.dailyLimitSeconds,
@@ -282,5 +275,10 @@ class TrackingEngine @Inject constructor(
 
     fun destroy() {
         engineScope.cancel()
+    }
+
+    companion object {
+        /** Sub-100ms sessions are noise — filter them out. */
+        private const val MIN_COUNTABLE_DURATION_MS = 100L
     }
 }

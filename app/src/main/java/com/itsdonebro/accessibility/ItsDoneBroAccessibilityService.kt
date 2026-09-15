@@ -3,27 +3,30 @@ package com.itsdonebro.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
-import com.itsdonebro.domain.ReelDetector
 import com.itsdonebro.domain.TrackingEngine
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /**
- * The heart of ItsDoneBro's detection.
- *
- * Receives Android accessibility events scoped to com.instagram.android
- * (as declared in res/xml/accessibility_service_config.xml) and feeds them
- * into [TrackingEngine].
+ * The entry point for all accessibility events.
  *
  * Privacy note: we only inspect the *structure* of the UI tree (view IDs,
- * class names, content descriptions). We never capture screen text, images,
- * messages, or any personal content.
+ * class names, content descriptions, bounds). We never capture screen text,
+ * messages, photos, or any personal content.
  *
- * Overlay close-on-exit: we track Instagram's foreground state via TWO signals:
+ * Detection pipeline:
+ *   Accessibility event
+ *       → onAccessibilityTick(rootNode)           [this class]
+ *       → ReelDetector.onTick(root)               [TrackingEngine]
+ *       → ReelScreenClassifier.classify()         [layer 1]
+ *       → ReelFingerprintExtractor.extract()      [layer 2]
+ *       → debounce → ReelDetectionEvent           [layer 3]
+ *       → TrackingEngine.handleDetectionEvent()   [count + persist]
+ *
+ * Overlay close-on-exit: tracked via TWO signals:
  *  1. TYPE_WINDOW_STATE_CHANGED — fires when a new window comes to the front.
- *  2. TYPE_WINDOWS_CHANGED      — fires when any window is removed (e.g. user
- *     swipes Instagram away). This catches cases where signal 1 is delayed or
- *     absent (e.g. quick swipe-to-home, recent-apps dismiss).
+ *  2. TYPE_WINDOWS_CHANGED      — fires when any window is removed (swipe home,
+ *     recent-apps dismiss, back press). Catches cases where signal 1 is absent.
  */
 @AndroidEntryPoint
 class ItsDoneBroAccessibilityService : AccessibilityService() {
@@ -48,7 +51,8 @@ class ItsDoneBroAccessibilityService : AccessibilityService() {
                     trackingEngine.onInstagramForeground(nowInstagram)
                 }
                 if (!isInstagramForeground) return
-                detectReels()
+                // Feed the root node into the detection pipeline
+                rootInActiveWindow?.let { trackingEngine.onAccessibilityTick(it) }
             }
 
             // ── Signal 2: Window list changed — check if Instagram is gone ────
@@ -63,13 +67,14 @@ class ItsDoneBroAccessibilityService : AccessibilityService() {
                 }
             }
 
-            // ── Signal 3: Content changed inside Instagram ────────────────────
+            // ── Signal 3: Content/scroll events inside Instagram ──────────────
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 if (!isInstagramForeground) return
                 val pkg = event.packageName?.toString() ?: return
                 if (pkg != instagramPackage) return
-                detectReels()
+                // Feed the root node into the detection pipeline
+                rootInActiveWindow?.let { trackingEngine.onAccessibilityTick(it) }
             }
 
             else -> { /* ignore all other event types */ }
@@ -77,13 +82,6 @@ class ItsDoneBroAccessibilityService : AccessibilityService() {
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
-
-    /** Run Reel detection against the current window root. */
-    private fun detectReels() {
-        val rootNode = rootInActiveWindow ?: return
-        val reelState = ReelDetector.detect(rootNode)
-        trackingEngine.onReelStateDetected(reelState)
-    }
 
     /**
      * Check whether an [AccessibilityWindowInfo] belongs to Instagram.
